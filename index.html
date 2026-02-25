@@ -906,7 +906,7 @@
     <div class="page-title" id="pageTitle">Tableau de bord</div>
     <div class="topbar-right">
       <div class="date-display" id="currentDate"></div>
-      <input class="search-input" type="text" placeholder="🔍  Rechercher...">
+      <input class="search-input" id="globalSearch" type="text" placeholder="🔍  Rechercher un employé, service, email...">
       <button class="btn btn-primary" onclick="openModal()">+ Nouveau pointage</button>
     </div>
   </div>
@@ -1091,7 +1091,7 @@
     <div class="modal-title">Nouveau pointage</div>
     <div class="form-group">
       <label class="form-label">Employé</label>
-      <select class="form-select">
+      <select class="form-select" id="pointageEmployee">
         <option>Sophie Martin — Développement</option>
         <option>Lucas Bernard — Marketing</option>
         <option>Amina Toure — RH</option>
@@ -1101,7 +1101,7 @@
     </div>
     <div class="form-group">
       <label class="form-label">Type</label>
-      <select class="form-select">
+      <select class="form-select" id="pointageType">
         <option>Entrée</option>
         <option>Sortie</option>
         <option>Absence justifiée</option>
@@ -1309,8 +1309,9 @@
 <script>
 // ─── DATA ───────────────────────────────────────────
 const now = new Date();
+const STORAGE_KEY = 'presenceflow_employees_v1';
 
-let employeesList = [
+const defaultEmployees = [
   {id:1, prenom:'Sophie',  nom:'Martin',   dept:'Développement', poste:'Développeuse Full Stack', color:'#4fffb0', contrat:'CDI',  email:'s.martin@corp.fr',    tel:'+33 6 11 22 33 44', horaire:'09:00 — 17:00', arr:'08:45', dep:'—',   status:'present', entree:'2021-03-15'},
   {id:2, prenom:'Lucas',   nom:'Bernard',  dept:'Marketing',     poste:'Chef de projet Marketing', color:'#6b8fff', contrat:'CDI',  email:'l.bernard@corp.fr',   tel:'+33 6 22 33 44 55', horaire:'09:00 — 17:00', arr:'09:12', dep:'—',   status:'late',    entree:'2020-09-01'},
   {id:3, prenom:'Amina',   nom:'Toure',    dept:'RH',            poste:'Responsable RH',           color:'#ffd166', contrat:'CDI',  email:'a.toure@corp.fr',     tel:'+33 6 33 44 55 66', horaire:'08:00 — 16:00', arr:'08:30', dep:'17:30',status:'present', entree:'2019-06-10'},
@@ -1321,10 +1322,30 @@ let employeesList = [
   {id:8, prenom:'Ali',     nom:'Hassan',   dept:'Marketing',     poste:'Community Manager',        color:'#80cbc4', contrat:'Stage',email:'a.hassan@corp.fr',    tel:'+33 6 88 99 00 11', horaire:'09:00 — 17:00', arr:'09:30', dep:'—',   status:'late',    entree:'2024-02-01'},
 ];
 
+function loadEmployees(){
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return [...defaultEmployees];
+    const parsed = JSON.parse(raw);
+    if(!Array.isArray(parsed) || !parsed.length) return [...defaultEmployees];
+    return parsed;
+  } catch (err) {
+    console.warn('Impossible de charger les employés sauvegardés', err);
+    return [...defaultEmployees];
+  }
+}
+
+function persistEmployees(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(employeesList));
+}
+
+let employeesList = loadEmployees();
+
 const avatarColors = ['#4fffb0','#6b8fff','#ffd166','#ff9f7f','#f48fb1','#80cbc4','#b39ddb','#ff6b6b','#a8e063','#fda085'];
 let selectedColor = avatarColors[0];
 let currentDeptFilter = 'Tous';
 let currentStep = 1;
+let searchQuery = '';
 
 const deptTags = {'Développement':'tag-dev','Marketing':'tag-mkt','RH':'tag-rh','Opérations':'tag-ops','Finance':'tag-rh','Commercial':'tag-mkt'};
 const statusBadge = {
@@ -1350,10 +1371,16 @@ for(let i=-3;i<=3;i++){
 }
 
 // Render table
+function matchesSearch(employee){
+  if(!searchQuery) return true;
+  const searchable = [employee.prenom, employee.nom, employee.dept, employee.poste, employee.email, employee.tel].join(' ').toLowerCase();
+  return searchable.includes(searchQuery);
+}
+
 function renderTable() {
   const tbody = document.getElementById('attendanceTable');
   tbody.innerHTML = '';
-  employeesList.forEach(e => {
+  employeesList.filter(matchesSearch).forEach(e => {
     const initials = e.prenom[0]+e.nom[0];
     tbody.innerHTML += `<tr>
       <td><div class="emp-info">
@@ -1373,7 +1400,8 @@ renderTable();
 function renderEmpCards(filter) {
   const grid = document.getElementById('empGrid');
   grid.innerHTML = '';
-  const list = filter && filter !== 'Tous' ? employeesList.filter(e=>e.dept===filter) : employeesList;
+  const deptList = filter && filter !== 'Tous' ? employeesList.filter(e=>e.dept===filter) : employeesList;
+  const list = deptList.filter(matchesSearch);
   list.forEach(e => {
     const initials = e.prenom[0]+e.nom[0];
     const statusColor = statusDot[e.status];
@@ -1455,17 +1483,43 @@ activities.forEach(a=>{
 
 // ─── MODALS ──────────────────────────────────────────
 function openModal(){
-  document.getElementById('timeInput').value=`${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`;
+  const currentTime = new Date();
+  document.getElementById('timeInput').value=`${String(currentTime.getHours()).padStart(2,'0')}:${String(currentTime.getMinutes()).padStart(2,'0')}`;
   document.getElementById('modalOverlay').classList.add('open');
 }
 function closeModal(){document.getElementById('modalOverlay').classList.remove('open');}
 function savePointing(){
+  const selectedEmployee = document.getElementById('pointageEmployee').value.split(' — ')[0];
+  const pointingType = document.getElementById('pointageType').value;
+  const pointingHour = document.getElementById('timeInput').value || '—';
+
+  const employee = employeesList.find(e => `${e.prenom} ${e.nom}` === selectedEmployee);
+  if(employee){
+    if(pointingType === 'Entrée'){
+      employee.arr = pointingHour;
+      employee.status = 'present';
+    } else if(pointingType === 'Sortie'){
+      employee.dep = pointingHour;
+    } else if(pointingType === 'Absence justifiée'){
+      employee.status = 'leave';
+      employee.arr = '—';
+      employee.dep = '—';
+    } else if(pointingType === 'Télétravail'){
+      employee.status = 'present';
+      employee.arr = `${pointingHour} (TT)`;
+    }
+    persistEmployees();
+  }
+
   closeModal();
+  renderTable();
+  renderEmpCards(currentDeptFilter);
+
   const newItem=document.createElement('div');
   newItem.className='activity-item';
   newItem.style.background='rgba(79,255,176,0.04)';
   newItem.innerHTML=`<div class="activity-dot" style="background:var(--accent)"></div>
-    <div><div class="activity-text"><strong>Nouveau pointage</strong> enregistré avec succès</div><div class="activity-time">À l'instant</div></div>`;
+    <div><div class="activity-text"><strong>${selectedEmployee}</strong> — ${pointingType} à ${pointingHour}</div><div class="activity-time">À l'instant</div></div>`;
   feed.prepend(newItem);
 }
 
@@ -1568,6 +1622,7 @@ function saveEmployee(){
   };
 
   employeesList.push(newEmp);
+  persistEmployees();
   closeAddEmpModal();
   renderTable();
   if(document.getElementById('employeesPage').style.display !== 'none'){
@@ -1588,11 +1643,20 @@ function saveEmployee(){
 }
 
 function updatePointageSelect(){
-  const sel = document.querySelector('#modalOverlay .form-select');
+  const sel = document.getElementById('pointageEmployee');
   if(!sel) return;
   sel.innerHTML = employeesList.map(e=>`<option>${e.prenom} ${e.nom} — ${e.dept}</option>`).join('');
 }
 updatePointageSelect();
+
+const searchInput = document.getElementById('globalSearch');
+if(searchInput){
+  searchInput.addEventListener('input', (event) => {
+    searchQuery = event.target.value.trim().toLowerCase();
+    renderTable();
+    renderEmpCards(currentDeptFilter);
+  });
+}
 
 function deleteEmployee(id){
   if(!confirm('Supprimer cet employé ?')) return;
@@ -1600,6 +1664,7 @@ function deleteEmployee(id){
   if(idx > -1){
     const e = employeesList[idx];
     employeesList.splice(idx,1);
+    persistEmployees();
     renderTable();
     renderEmpCards(currentDeptFilter);
     updatePointageSelect();
@@ -1631,6 +1696,7 @@ function editEmployee(id){
     e.email = document.getElementById('empEmail').value.trim() || e.email;
     e.tel = document.getElementById('empTel').value.trim() || e.tel;
     e.color = selectedColor;
+    persistEmployees();
     closeAddEmpModal();
     renderTable();
     renderEmpCards(currentDeptFilter);
